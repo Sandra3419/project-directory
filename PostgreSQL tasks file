@@ -1,0 +1,66 @@
+---
+- name: Install PostgreSQL packages
+  yum:
+    name:
+      - postgresql-server
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+  become: yes
+
+- name: Initialize PostgreSQL database
+  command: postgresql-setup --initdb
+  become: yes
+  args:
+    creates: /var/lib/pgsql/data/postgresql.conf
+
+- name: Ensure PostgreSQL is started and enabled
+  systemd:
+    name: postgresql
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Allow password authentication for local connections
+  lineinfile:
+    path: /var/lib/pgsql/data/pg_hba.conf
+    regexp: '^local\s+all\s+all\s+peer'
+    line: 'local   all             all                                     md5'
+    backrefs: yes
+  become: yes
+  notify: Restart PostgreSQL
+
+- name: Create application database user
+  postgresql_user:
+    name: devops
+    password: password
+    role_attr_flags: CREATEDB,LOGIN
+    state: present
+  become: yes
+  become_user: postgres
+
+- name: Copy database initialization script
+  copy:
+    content: |
+      CREATE DATABASE sharedappdb;
+      \c sharedappdb;
+
+      CREATE TABLE devs (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(50)
+      );
+
+      INSERT INTO devs (name) VALUES ('Flask Developer'), ('Node Developer'), ('Shared DB User');
+    dest: /tmp/init.sql
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  become: yes
+
+- name: Initialize database schema
+  command: psql -f /tmp/init.sql
+  become: yes
+  become_user: postgres
+  register: init_result
+  failed_when: init_result.rc != 0 and "already exists" not in init_result.stderr
+...

@@ -1,0 +1,2 @@
+cp nodejs-app/index.js ansible/roles/nodejs_app/files/
+cp nodejs-app/package.json ansible/roles/nodejs_app/files/

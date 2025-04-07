@@ -1,0 +1,70 @@
+---
+- name: Install Node.js repository
+  shell: curl -sL https://rpm.nodesource.com/setup_14.x | bash -
+  args:
+    creates: /etc/yum.repos.d/nodesource-el7.repo
+  become: yes
+
+- name: Install Node.js
+  yum:
+    name: nodejs
+    state: present
+  become: yes
+
+- name: Install PM2 globally
+  npm:
+    name: pm2
+    global: yes
+    state: present
+  become: yes
+
+- name: Create directory for Node.js app
+  file:
+    path: /opt/nodejs_app
+    state: directory
+    owner: centos
+    group: centos
+    mode: '0755'
+  become: yes
+
+- name: Copy Node.js application files
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: centos
+    group: centos
+    mode: '0644'
+  with_items:
+    - { src: "index.js", dest: "/opt/nodejs_app/index.js" }
+    - { src: "package.json", dest: "/opt/nodejs_app/package.json" }
+  become: yes
+
+- name: Install Node.js dependencies
+  npm:
+    path: /opt/nodejs_app
+    state: present
+  become: yes
+
+- name: Start Node.js application with PM2
+  shell: pm2 start /opt/nodejs_app/index.js --name nodejs_app
+  args:
+    creates: /home/centos/.pm2/pids/nodejs_app-0.pid
+  become: yes
+  become_user: centos
+
+- name: Save PM2 process list
+  shell: pm2 save
+  become: yes
+  become_user: centos
+
+- name: Set PM2 to start on boot
+  shell: pm2 startup | tail -n 1
+  register: pm2_startup_cmd
+  become: yes
+  become_user: centos
+
+- name: Run PM2 startup command
+  shell: "{{ pm2_startup_cmd.stdout }}"
+  become: yes
+  when: pm2_startup_cmd.stdout != ""
+...

@@ -1,0 +1,118 @@
+---
+pipeline {
+    agent {
+        label 'ubuntu'
+    }
+    
+    environment {
+        EC2_IP = credentials('EC2_IP_ADDRESS')
+        SSH_USER = 'centos'
+        SSH_KEY = credentials('EC2_SSH_KEY')
+        FLASK_APP_VERSION = "v${BUILD_NUMBER}"
+        NODE_APP_VERSION = "v${BUILD_NUMBER}"
+        ARTIFACTS_RETENTION_DAYS = 7
+    }
+    
+    stages {
+        stage('Prepare Workspace') {
+            steps {
+                // Clean workspace
+                cleanWs()
+                
+                // Create directories for artifacts
+                sh '''
+                mkdir -p flask_app/templates
+                mkdir -p nodejs_app
+                mkdir -p artifacts/flask_app
+                mkdir -p artifacts/nodejs_app
+                '''
+            }
+        }
+        
+        stage('Prepare Flask App') {
+            steps {
+                dir('flask_app') {
+                    // Copy app.py from SCM or create it
+                    writeFile file: 'app.py', text: readFile(file: '${WORKSPACE}/flask-app/app.py')
+                    writeFile file: 'templates/index.html', text: readFile(file: '${WORKSPACE}/flask-app/templates/index.html')
+                    writeFile file: 'requirements.txt', text: readFile(file: '${WORKSPACE}/flask-app/requirements.txt')
+                    
+                    // Create artifact
+                    sh 'zip -r flask_app_${BUILD_NUMBER}.zip .'
+                }
+            }
+        }
+        
+        stage('Prepare Node.js App') {
+            steps {
+                dir('nodejs_app') {
+                    // Copy Node.js files from SCM or create them
+                    writeFile file: 'index.js', text: readFile(file: '${WORKSPACE}/nodejs-app/index.js')
+                    writeFile file: 'package.json', text: readFile(file: '${WORKSPACE}/nodejs-app/package.json')
+                    
+                    // Create artifact
+                    sh 'zip -r nodejs_app_${BUILD_NUMBER}.zip .'
+                }
+            }
+        }
+        
+        stage('Archive Artifacts') {
+            steps {
+                // Archive artifacts
+                archiveArtifacts artifacts: 'flask_app/flask_app_${BUILD_NUMBER}.zip', fingerprint: true
+                archiveArtifacts artifacts: 'nodejs_app/nodejs_app_${BUILD_NUMBER}.zip', fingerprint: true
+                
+                // Copy artifacts to version-specific locations
+                sh '''
+                mkdir -p artifacts/flask_app/${FLASK_APP_VERSION}
+                mkdir -p artifacts/nodejs_app/${NODE_APP_VERSION}
+                cp flask_app/flask_app_${BUILD_NUMBER}.zip artifacts/flask_app/${FLASK_APP_VERSION}/
+                cp nodejs_app/nodejs_app_${BUILD_NUMBER}.zip artifacts/nodejs_app/${NODE_APP_VERSION}/
+                '''
+            }
+        }
+        
+        stage('Deploy to EC2') {
+            steps {
+                // Copy Ansible files from SCM
+                sh 'cp -r ${WORKSPACE}/ansible .'
+                
+                // Update inventory with actual EC2 IP
+                sh '''
+                sed -i "s/YOUR_EC2_IP/${EC2_IP}/" ansible/inventory
+                sed -i "s|~/.ssh/your-key.pem|${SSH_KEY}|" ansible/inventory
+                '''
+                
+                // Run Ansible playbook
+                sh '''
+                cd ansible
+                ansible-playbook -i inventory playbook.yml
+                '''
+            }
+        }
+        
+        stage('Clean Old Artifacts') {
+            steps {
+                sh """
+                # Find and delete Flask app artifacts older than ${ARTIFACTS_RETENTION_DAYS} days
+                find ${WORKSPACE}/artifacts/flask_app -type d -mtime +${ARTIFACTS_RETENTION_DAYS} -exec rm -rf {} \\; 2>/dev/null || true
+                
+                # Find and delete Node.js app artifacts older than ${ARTIFACTS_RETENTION_DAYS} days
+                find ${WORKSPACE}/artifacts/nodejs_app -type d -mtime +${ARTIFACTS_RETENTION_DAYS} -exec rm -rf {} \\; 2>/dev/null || true
+                """
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Deployment successful! Applications are running at:"
+            echo "Flask app: http://${EC2_IP}:5000"
+            echo "Node.js app: http://${EC2_IP}:3000"
+        }
+        failure {
+            echo "Deployment failed. Check the logs for details."
+        }
+    }
+}
+...
