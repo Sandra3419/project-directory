@@ -1,0 +1,10 @@
+---
+- name: Set up PostgreSQL, Flask, and Node.js Apps
+  hosts: ec2_servers
+  become: yes
+  
+  roles:
+    - postgresql
+    - flask_app
+    - nodejs_app
+...
